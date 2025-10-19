@@ -1,0 +1,38 @@
+{
+  "selected_features": [
+    "Close_lag_1",
+    "Close_lag_2",
+    "Close_sma_3"
+  ],
+  "ranking": [
+    1,
+    1,
+    2,
+    1,
+    5,
+    3,
+    4
+  ],
+  "support": [
+    true,
+    true,
+    false,
+    true,
+    false,
+    false,
+    false
+  ],
+  "validation_scores": [
+    -0.21493973024453547,
+    -0.2153715783451985,
+    -0.2153715251053967,
+    -0.21537154623354188,
+    -0.21537130684863792
+  ],
+  "estimator_name": "Lasso",
+  "n_splits": 2,
+  "step": 1,
+  "min_features_to_select": 3,
+  "scoring": "neg_root_mean_squared_error",
+  "gap": 1
+}

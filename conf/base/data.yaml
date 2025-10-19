@@ -1,0 +1,19 @@
+ticker: NVDA
+start: "2015-10-17"
+end: "2025-10-17"
+interval: 1d
+save:
+  path: data/raw/nvda.parquet
+  format: parquet
+macro:
+  series:
+    DGS10: treasury_yield_10y
+    DFF: fed_funds_rate
+    T10YIE: inflation_expectation_10y
+    DTWEXBGS: dollar_index
+    DCOILWTICO: oil_price_wti
+    SP500: sp500_index
+    VIXCLS: vix_volatility
+    T10Y2Y: yield_spread_10y_2y
+    BAMLH0A0HYM2: high_yield_spread
+  fill_method: ffill

@@ -1,0 +1,10 @@
+# Configuración base del modelo seleccionado para serving o análisis
+
+name: __PENDING__
+version: null
+pipeline:
+  target_column: Close
+  features_policy: "__AUTO__"
+  excluded_features: []
+  feature_artifact: artifacts/feature_selection/selected_features.json
+  estimator: __PENDING__

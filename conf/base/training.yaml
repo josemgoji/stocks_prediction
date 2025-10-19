@@ -1,0 +1,103 @@
+# Configuración de entrenamiento y selección de modelos
+
+# Columna objetivo principal para la predicción
+target_column: Close
+
+split:
+  train_size: 0.7
+  val_size: 0.15
+  test_size: 0.15
+  gap: 1
+
+# Parámetros para FeatureFrameAssembler
+assembler:
+  lags: [1, 2]
+  returns: [1]
+  rolling_windows: [3]
+  high_column: High
+  low_column: Low
+  volume_column: Volume
+  price_for_nominal: Close
+
+feature_selection:
+  enabled: true
+  estimator: lasso
+  params:
+    alpha: 0.001
+    max_iter: 10000
+  n_splits: 2
+  min_features_to_select: 3
+  step: 1
+  scoring: neg_root_mean_squared_error
+  gap: 1
+  min_samples_required: 5
+  artifact_dir: artifacts/feature_selection
+  artifact_name: selected_features.json
+  tracking_artifact_path: feature_selection
+
+# Definición de candidatos para la competencia de modelos
+candidates:
+  - name: linear_regression
+    estimator: linear_regression
+    extra_steps:
+      - name: standard_scaler
+        type: standard_scaler
+  - name: random_forest
+    estimator: random_forest
+    params:
+      n_estimators: 300
+      max_depth: 8
+      random_state: 42
+    tuning:
+      strategy: grid
+      param_grid:
+        estimator__n_estimators: [200, 300, 400]
+        estimator__max_depth: [6, 8, 10]
+      n_splits: 3
+      gap: 1
+      scoring: neg_root_mean_squared_error
+      artifact_dir: artifacts/hyperparameters/random_forest
+      artifact_name: tuning_results.json
+      tracking_artifact_path: hyperparameter_tuning/random_forest
+  - name: gradient_boosting
+    estimator: gradient_boosting
+    params:
+      n_estimators: 200
+      learning_rate: 0.05
+      max_depth: 3
+      random_state: 42
+    tuning:
+      strategy: grid
+      param_grid:
+        estimator__n_estimators: [100, 200, 300]
+        estimator__learning_rate: [0.05, 0.1]
+        estimator__max_depth: [2, 3]
+      n_splits: 3
+      gap: 1
+      scoring: neg_root_mean_squared_error
+      artifact_dir: artifacts/hyperparameters/gradient_boosting
+      artifact_name: tuning_results.json
+      tracking_artifact_path: hyperparameter_tuning/gradient_boosting
+
+primary_metric: rmse
+
+mlflow:
+  enabled: true
+  tracking_uri: "http://127.0.0.1:8888"
+  experiment_name: stocks_prediction
+  run_name: model_selection
+  tags:
+    project: stocks_prediction
+    environment: local
+  s3_endpoint_url: "http://127.0.0.1:9000"
+  aws_access_key_id: "mlflow"
+  aws_secret_access_key: "mlflow_p@ssw0rd"
+  artifact_bucket: "mlflow"
+  aws_default_region: "us-east-1"
+  aws_s3_force_path_style: true
+
+model_registry:
+  artifact_path: models_best
+  model_name: StocksPredictionModel
+  tags:
+    stage: staging

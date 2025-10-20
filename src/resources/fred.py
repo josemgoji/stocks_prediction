@@ -64,7 +64,11 @@ class FredResource:
             target_index = target_index.tz_localize("UTC")
 
         aligned = macro_df.reindex(target_index)
-        if fill_method:
+        if fill_method == "ffill":
+            aligned = aligned.ffill()
+        elif fill_method == "bfill":
+            aligned = aligned.bfill()
+        elif fill_method:
             aligned = aligned.fillna(method=fill_method)
 
         return aligned

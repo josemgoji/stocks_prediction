@@ -2,6 +2,7 @@
 
 # Columna objetivo principal para la predicción
 target_column: Close
+horizon: 20
 
 split:
   train_size: 0.7
@@ -11,26 +12,29 @@ split:
 
 # Parámetros para FeatureFrameAssembler
 assembler:
-  lags: [1, 2]
+  lags: 20
   returns: [1]
   rolling_windows: [3]
   high_column: High
   low_column: Low
   volume_column: Volume
   price_for_nominal: Close
+  scaler: standard
+  attach_base: true
 
 feature_selection:
   enabled: true
   estimator: lasso
   params:
-    alpha: 0.001
-    max_iter: 10000
+    alpha: 0.00001
+    max_iter: 200000
   n_splits: 2
-  min_features_to_select: 3
+  min_features_to_select: 5
   step: 1
-  scoring: neg_root_mean_squared_error
+  scoring: neg_mean_absolute_percentage_error
   gap: 1
   min_samples_required: 5
+  correlation_threshold: 0.9
   artifact_dir: artifacts/feature_selection
   artifact_name: selected_features.json
   tracking_artifact_path: feature_selection
@@ -39,32 +43,13 @@ feature_selection:
 candidates:
   - name: linear_regression
     estimator: linear_regression
-    extra_steps:
-      - name: standard_scaler
-        type: standard_scaler
-  - name: random_forest
-    estimator: random_forest
-    params:
-      n_estimators: 300
-      max_depth: 8
-      random_state: 42
-    tuning:
-      strategy: grid
-      param_grid:
-        estimator__n_estimators: [200, 300, 400]
-        estimator__max_depth: [6, 8, 10]
-      n_splits: 3
-      gap: 1
-      scoring: neg_root_mean_squared_error
-      artifact_dir: artifacts/hyperparameters/random_forest
-      artifact_name: tuning_results.json
-      tracking_artifact_path: hyperparameter_tuning/random_forest
+
   - name: gradient_boosting
     estimator: gradient_boosting
     params:
       n_estimators: 200
       learning_rate: 0.05
-      max_depth: 3
+      max_depth: 6
       random_state: 42
     tuning:
       strategy: grid
@@ -74,10 +59,18 @@ candidates:
         estimator__max_depth: [2, 3]
       n_splits: 3
       gap: 1
-      scoring: neg_root_mean_squared_error
+      scoring: neg_mean_absolute_percentage_error
       artifact_dir: artifacts/hyperparameters/gradient_boosting
       artifact_name: tuning_results.json
       tracking_artifact_path: hyperparameter_tuning/gradient_boosting
+
+  - name: knn
+    estimator: knn
+    params:
+      n_neighbors: 5
+    extra_steps:
+      - type: standard_scaler
+        name: knn_standard_scaler
 
 primary_metric: rmse
 

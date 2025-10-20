@@ -32,6 +32,7 @@ class FeatureSelectionResult:
     validation_scores: tuple[float, ...]
     estimator_name: str
     artifact_path: Path | None = None
+    dropped_features: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         """Representación en diccionario lista para ser persistida."""
@@ -42,7 +43,56 @@ class FeatureSelectionResult:
             "validation_scores": list(self.validation_scores),
             "estimator_name": self.estimator_name,
             "artifact_path": str(self.artifact_path) if self.artifact_path else None,
+            "dropped_features": list(self.dropped_features),
         }
+
+
+@dataclass(slots=True)
+class CorrelatedFeatureDropper:
+    """Remueve columnas altamente correlacionadas dentro de un subconjunto."""
+
+    threshold: float
+
+    def transform(
+        self,
+        frame: pd.DataFrame,
+        *,
+        columns: Sequence[str] | None = None,
+    ) -> tuple[pd.DataFrame, tuple[str, ...]]:
+        """Devuelve un DataFrame sin columnas con correlación > threshold."""
+        if self.threshold <= 0:
+            return frame, ()
+
+        if columns is None:
+            candidate_columns = frame.select_dtypes(include="number").columns
+        else:
+            candidate_columns = [column for column in columns if column in frame.columns]
+
+        if not candidate_columns:
+            return frame, ()
+
+        numeric_columns = frame.loc[:, candidate_columns].select_dtypes(include="number").columns
+        if numeric_columns.empty:
+            return frame, ()
+
+        corr_matrix = frame.loc[:, numeric_columns].corr().abs()
+        if corr_matrix.empty:
+            return frame, ()
+
+        upper_mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+        upper_triangle = corr_matrix.where(upper_mask)
+
+        to_drop: list[str] = []
+        for column in upper_triangle.columns:
+            column_corr = upper_triangle[column]
+            if column_corr.dropna().gt(self.threshold).any():
+                to_drop.append(column)
+
+        if not to_drop:
+            return frame, ()
+
+        pruned_frame = frame.drop(columns=to_drop, errors="ignore")
+        return pruned_frame, tuple(to_drop)
 
 
 def run_rfecv_selection(
@@ -59,6 +109,7 @@ def run_rfecv_selection(
     artifact_name: str = "selected_features.json",
     tracking_client: TrackingClient | None = None,
     tracking_artifact_path: str = "feature_selection",
+    pre_dropped_features: Sequence[str] | None = None,
 ) -> FeatureSelectionResult:
     """Ejecuta RFECV con TimeSeriesSplit y persiste la lista de features.
 
@@ -75,6 +126,7 @@ def run_rfecv_selection(
         artifact_name: Nombre del archivo JSON generado.
         tracking_client: Cliente opcional (p. ej. MLflow) para registrar el JSON.
         tracking_artifact_path: Carpeta destino relativa en el cliente de tracking.
+        pre_dropped_features: Columnas eliminadas previamente (p. ej. por alta correlación).
 
     Returns:
         `FeatureSelectionResult` con los datos esenciales de la ejecución.
@@ -103,6 +155,8 @@ def run_rfecv_selection(
     selected_features = tuple(X.columns[support])
     scores = _extract_cv_scores(selector)
 
+    dropped_features = tuple(pre_dropped_features) if pre_dropped_features else ()
+
     payload = {
         "selected_features": list(selected_features),
         "ranking": ranking,
@@ -114,6 +168,7 @@ def run_rfecv_selection(
         "min_features_to_select": min_features_to_select,
         "scoring": scoring,
         "gap": gap,
+        "dropped_features": list(dropped_features),
     }
 
     artifact_path: Path | None = None
@@ -134,6 +189,7 @@ def run_rfecv_selection(
         validation_scores=tuple(scores),
         estimator_name=estimator.__class__.__name__,
         artifact_path=artifact_path,
+        dropped_features=dropped_features,
     )
 
 

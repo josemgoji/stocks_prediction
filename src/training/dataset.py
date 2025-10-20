@@ -17,6 +17,8 @@ class TemporalSplitResult:
     y_val: pd.Series
     X_test: pd.DataFrame
     y_test: pd.Series
+    label_column: str
+    horizon: int = 1
 
     @property
     def train_frame(self) -> pd.DataFrame:
@@ -72,6 +74,7 @@ def temporal_train_val_test_split(
     val_size: float = 0.15,
     test_size: float = 0.15,
     gap: int = 0,
+    horizon: int = 1,
 ) -> TemporalSplitResult:
     """Genera splits temporales manteniendo el orden cronológico.
 
@@ -82,6 +85,7 @@ def temporal_train_val_test_split(
         val_size: Proporción para validación.
         test_size: Proporción para test (se ajusta si no suma 1).
         gap: Observaciones a omitir entre train/val o val/test para evitar fuga.
+        horizon: Pasos futuros a predecir (t+h). `h=1` corresponde al siguiente periodo.
 
     Returns:
         `TemporalSplitResult` con `X` y `y` para cada partición.
@@ -89,10 +93,18 @@ def temporal_train_val_test_split(
     if target_column not in frame.columns:
         raise KeyError(f"Columna objetivo '{target_column}' no está en el DataFrame.")
 
-    total = len(frame)
-    if total < 10:
-        raise ValueError("El dataset debe tener al menos 10 observaciones para particionar.")
+    if horizon < 1:
+        raise ValueError("`horizon` debe ser un entero positivo.")
 
+    label_name = f"{target_column}_target_h{horizon}"
+    shifted_target = frame[target_column].shift(-horizon)
+    shifted_target.name = label_name
+
+    valid_mask = shifted_target.notna()
+    frame_aligned = frame.loc[valid_mask].copy()
+    shifted_target = shifted_target.loc[valid_mask]
+
+    total = len(frame_aligned)
     train_end_idx = int(total * train_size)
     val_end_idx = train_end_idx + int(total * val_size)
 
@@ -106,22 +118,22 @@ def temporal_train_val_test_split(
     val_slice_end = min(val_end_idx, total)
     test_slice_start = min(val_end_idx + gap, total)
 
-    train_frame = frame.iloc[:train_slice_end]
-    val_frame = frame.iloc[val_slice_start:val_slice_end]
-    test_frame = frame.iloc[test_slice_start:]
+    train_frame = frame_aligned.iloc[:train_slice_end]
+    val_frame = frame_aligned.iloc[val_slice_start:val_slice_end]
+    test_frame = frame_aligned.iloc[test_slice_start:]
 
     if train_frame.empty or val_frame.empty or test_frame.empty:
         raise ValueError(
             "Alguna de las particiones resultó vacía. Revisa los porcentajes o el tamaño del dataset."
         )
 
-    y_train = train_frame[target_column]
-    y_val = val_frame[target_column]
-    y_test = test_frame[target_column]
+    y_train = shifted_target.iloc[:train_slice_end]
+    y_val = shifted_target.iloc[val_slice_start:val_slice_end]
+    y_test = shifted_target.iloc[test_slice_start:]
 
-    X_train = train_frame.drop(columns=[target_column])
-    X_val = val_frame.drop(columns=[target_column])
-    X_test = test_frame.drop(columns=[target_column])
+    X_train = train_frame
+    X_val = val_frame
+    X_test = test_frame
 
     return TemporalSplitResult(
         X_train=X_train,
@@ -130,6 +142,8 @@ def temporal_train_val_test_split(
         y_val=y_val,
         X_test=X_test,
         y_test=y_test,
+        label_column=label_name,
+        horizon=horizon,
     )
 
 

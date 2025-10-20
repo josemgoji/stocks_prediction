@@ -12,6 +12,7 @@ from sklearn.svm import SVR
 from sklearn.neighbors import KNeighborsRegressor
 
 from sklearn.base import BaseEstimator
+from lightgbm import LGBMRegressor
 
 EstimatorFactory = Callable[[Mapping[str, object] | None], BaseEstimator]
 
@@ -51,6 +52,14 @@ def _build_gradient_boosting(params: Mapping[str, object] | None) -> BaseEstimat
     return model
 
 
+def _build_lightgbm(params: Mapping[str, object] | None) -> BaseEstimator:
+    
+    model = LGBMRegressor()
+    if params:
+        model.set_params(**params)
+    return model
+
+
 def _build_decision_tree(params: Mapping[str, object] | None) -> BaseEstimator:
     model = DecisionTreeRegressor(random_state=params.get("random_state") if params else None)
     if params:
@@ -78,6 +87,7 @@ ESTIMATOR_REGISTRY: dict[str, EstimatorFactory] = {
     "ridge": _build_ridge,
     "random_forest": _build_random_forest,
     "gradient_boosting": _build_gradient_boosting,
+    "lightgbm": _build_lightgbm,
     "decision_tree": _build_decision_tree,
     "svr": _build_svr,
     "knn": _build_knn,
@@ -93,4 +103,3 @@ def create_estimator(name: str, params: Mapping[str, object] | None = None) -> B
             f"El estimador '{name}' no está registrado. Opciones: {list(ESTIMATOR_REGISTRY)}"
         ) from exc
     return factory(params)
-

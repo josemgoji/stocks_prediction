@@ -1,6 +1,5 @@
 """Punto de entrada para entrenar modelos utilizando configuración YAML."""
 
-import os
 import yaml
 
 from pathlib import Path
@@ -10,7 +9,7 @@ from mlflow.models.signature import infer_signature
 
 from src.models.estimators import create_estimator
 from src.models.pipelines import PipelineConfig
-from src.registry.mlflow_client import MLflowTracker
+from src.registry.mlflow_client import MLflowTracker, configure_mlflow_environment
 from src.training.dataset import load_dataset, temporal_train_val_test_split
 from src.training.model_selection import (
     CandidateDefinition,
@@ -39,6 +38,7 @@ def run_training(
 
     target_column = training_cfg.get("target_column", "Close")
     split_cfg = training_cfg.get("split", {})
+    horizon = int(training_cfg.get("horizon", 1))
 
     splits = temporal_train_val_test_split(
         dataset,
@@ -47,6 +47,7 @@ def run_training(
         val_size=float(split_cfg.get("val_size", 0.15)),
         test_size=float(split_cfg.get("test_size", 0.15)),
         gap=int(split_cfg.get("gap", 0)),
+        horizon=horizon,
     )
 
     assembler_params = training_cfg.get("assembler", {})
@@ -71,6 +72,7 @@ def run_training(
         scoring=selection_cfg.get("scoring"),
         gap=int(selection_cfg.get("gap", split_cfg.get("gap", 0))),
         min_samples_required=selection_cfg.get("min_samples_required"),
+        correlation_threshold=selection_cfg.get("correlation_threshold"),
         artifact_dir=selection_cfg.get("artifact_dir"),
         artifact_name=selection_cfg.get("artifact_name", "selected_features.json"),
         tracking_artifact_path=selection_cfg.get("tracking_artifact_path", "feature_selection"),
@@ -101,6 +103,7 @@ def run_training(
             {
                 "pipeline_target": target_column,
                 "selection_estimator": selection_config.estimator.__class__.__name__,
+                "label_column": splits.label_column,
             }
         )
         tracker.log_params(
@@ -109,6 +112,7 @@ def run_training(
                 "val_size": split_cfg.get("val_size", 0.15),
                 "test_size": split_cfg.get("test_size", 0.15),
                 "split_gap": split_cfg.get("gap", 0),
+                "horizon": horizon,
             }
         )
 
@@ -132,7 +136,22 @@ def run_training(
             if sample_input.empty:
                 sample_input = splits.train_frame.head(1)
             sample_input = sample_input.copy()
-            sample_for_signature = sample_input.head(min(len(sample_input), 5))
+
+            label_column = getattr(splits, "label_column", None)
+
+            sample_for_signature = sample_input.head(min(len(sample_input), 5)).copy()
+            if label_column:
+                sample_for_signature = sample_for_signature.drop(
+                    columns=[label_column],
+                    errors="ignore",
+                )
+            int_columns = sample_for_signature.select_dtypes(
+                include=("int", "int64", "int32", "Int64")
+            ).columns
+            if len(int_columns) > 0:
+                sample_for_signature = sample_for_signature.astype(
+                    {column: "float64" for column in int_columns}
+                )
             predictions_sample = best.pipeline.predict(sample_for_signature)
             signature = infer_signature(sample_for_signature, predictions_sample)
             input_example = sample_for_signature.head(1)
@@ -150,6 +169,7 @@ def run_training(
         tracker.log_params(
             {"selected_features_count": len(outcome.feature_selection.selected_features)}
         )
+        tracker.log_params({"prediction_horizon": horizon})
         try:
             tracker.log_dict(
                 {"selected_features": list(outcome.feature_selection.selected_features)},
@@ -266,26 +286,12 @@ def _build_mlflow_tracker(config: Mapping[str, Any] | None) -> MLflowTracker | N
     default_tags = config.get("tags") or {}
     run_name = config.get("run_name", "model_selection")
 
-    s3_endpoint = config.get("s3_endpoint_url")
-    access_key = config.get("aws_access_key_id")
-    secret_key = config.get("aws_secret_access_key")
-    session_token = config.get("aws_session_token")
+    configure_mlflow_environment(config)
+
     artifact_bucket = config.get("artifact_bucket")
+    s3_endpoint = config.get("s3_endpoint_url")
     region_name = config.get("aws_default_region")
     force_path_style = config.get("aws_s3_force_path_style")
-
-    if s3_endpoint:
-        os.environ["MLFLOW_S3_ENDPOINT_URL"] = str(s3_endpoint)
-    if access_key:
-        os.environ["AWS_ACCESS_KEY_ID"] = str(access_key)
-    if secret_key:
-        os.environ["AWS_SECRET_ACCESS_KEY"] = str(secret_key)
-    if session_token:
-        os.environ["AWS_SESSION_TOKEN"] = str(session_token)
-    if region_name:
-        os.environ.setdefault("AWS_DEFAULT_REGION", str(region_name))
-    if force_path_style:
-        os.environ["AWS_S3_FORCE_PATH_STYLE"] = "true"
 
     if artifact_bucket:
         try:

@@ -1,7 +1,6 @@
 """Clientes auxiliares para interactuar con MLflow."""
 
-from __future__ import annotations
-
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -120,3 +119,29 @@ class MLflowTracker:
             for key, value in tags.items():
                 self._client.set_registered_model_tag(name, key, str(value))
         return result
+
+
+def configure_mlflow_environment(config: Mapping[str, Any] | None) -> None:
+    """Aplica variables de entorno para MLflow/S3 a partir de configuración declarativa."""
+    if not config:
+        return
+
+    s3_endpoint = config.get("s3_endpoint_url")
+    access_key = config.get("aws_access_key_id")
+    secret_key = config.get("aws_secret_access_key")
+    session_token = config.get("aws_session_token")
+    region_name = config.get("aws_default_region")
+    force_path_style = config.get("aws_s3_force_path_style")
+
+    if s3_endpoint:
+        os.environ["MLFLOW_S3_ENDPOINT_URL"] = str(s3_endpoint)
+    if access_key:
+        os.environ["AWS_ACCESS_KEY_ID"] = str(access_key)
+    if secret_key:
+        os.environ["AWS_SECRET_ACCESS_KEY"] = str(secret_key)
+    if session_token:
+        os.environ["AWS_SESSION_TOKEN"] = str(session_token)
+    if region_name:
+        os.environ.setdefault("AWS_DEFAULT_REGION", str(region_name))
+    if force_path_style:
+        os.environ["AWS_S3_FORCE_PATH_STYLE"] = "true"

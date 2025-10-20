@@ -36,8 +36,8 @@ def fetch_market_data(
         interval=interval,
         auto_adjust=auto_adjust,
     )
-
-    dataset["log_return"] = np.log(dataset["Close"] / dataset["Close"].shift(1))
+    
+    original_columns = list(dataset.columns)
 
     if macro_series:
         macro_client = fred_resource or FredResource(api_key=fred_api_key)
@@ -50,7 +50,22 @@ def fetch_market_data(
         )
         dataset = dataset.join(macro_data)
 
-    dataset = dataset.dropna()
+        macro_columns = list(macro_data.columns)
+        if macro_columns:
+            # Asegura que las columnas macro tengan valores iniciales rellenados, evitando
+            # perder observaciones del activo base cuando la serie macro empieza más tarde.
+            dataset.loc[:, macro_columns] = dataset[macro_columns].ffill()
+            dataset.loc[:, macro_columns] = dataset[macro_columns].bfill()
+
+            # Si alguna serie macro sigue completamente vacía, la descartamos para no afectar.
+            empty_macros = [
+                column for column in macro_columns if dataset[column].isna().all()
+            ]
+            if empty_macros:
+                dataset = dataset.drop(columns=empty_macros)
+
+    if original_columns:
+        dataset = dataset.dropna(subset=original_columns)
 
     if save_path:
         _persist(dataset, save_path, save_format)

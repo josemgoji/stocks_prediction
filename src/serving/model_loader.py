@@ -1,56 +1,47 @@
 """Carga modelos registrados en MLflow para uso en batch o APIs."""
 
+from dataclasses import dataclass
 from typing import Any
 
 import mlflow
+from mlflow.tracking import MlflowClient
 
 
-def load_registered_model(
+@dataclass(slots=True)
+class LoadedModel:
+    """Representa un modelo cargado desde MLflow junto con su metadata básica."""
+
+    pipeline: Any
+    model_uri: str
+    version: str
+    run_id: str | None
+
+
+def load_latest_model_version(
     model_name: str,
     *,
-    stage: str | None = "Latest",
     tracking_uri: str | None = None,
     registry_uri: str | None = None,
-) -> Any:
-    """Devuelve el pipeline almacenado en el Model Registry.
+) -> LoadedModel:
+    """Carga la última versión registrada de un modelo."""
 
-    Args:
-        model_name: Nombre registrado en MLflow (p. ej. `StocksPredictionModel`).
-        stage: Versión a resolver (`None` para versión numérica, `"Latest"` o un stage como `"Staging"`).
-        tracking_uri: URI del tracking server si no está configurado globalmente.
-        registry_uri: URI del registry (usualmente igual al tracking server).
-
-    Returns:
-        Instancia del modelo/pipeline listo para predecir.
-    """
     if tracking_uri:
         mlflow.set_tracking_uri(tracking_uri)
     if registry_uri:
         mlflow.set_registry_uri(registry_uri)
 
-    if stage is None:
-        raise ValueError(
-            "Debes especificar un `stage` ('Latest', 'Staging', 'Production', etc.) "
-            "o reemplazar el método para cargar por versión explícita."
-        )
+    client = MlflowClient()
+    versions = client.search_model_versions(f"name='{model_name}'")
+    if not versions:
+        raise ValueError(f"No hay versiones registradas para el modelo '{model_name}'.")
 
-    model_uri = f"models:/{model_name}/{stage}"
-    return mlflow.pyfunc.load_model(model_uri)
-
-
-def load_model_version(
-    model_name: str,
-    version: str | int,
-    *,
-    tracking_uri: str | None = None,
-    registry_uri: str | None = None,
-) -> Any:
-    """Carga una versión específica (`models:/name/version`)."""
-    if tracking_uri:
-        mlflow.set_tracking_uri(tracking_uri)
-    if registry_uri:
-        mlflow.set_registry_uri(registry_uri)
-
-    model_uri = f"models:/{model_name}/{version}"
-    return mlflow.pyfunc.load_model(model_uri)
-
+    latest = max(versions, key=lambda v: int(v.version))
+    model_uri = f"models:/{model_name}/{latest.version}"
+    pipeline = mlflow.pyfunc.load_model(model_uri)
+    run_id = getattr(latest, "run_id", None)
+    return LoadedModel(
+        pipeline=pipeline,
+        model_uri=model_uri,
+        version=str(latest.version),
+        run_id=run_id,
+    )

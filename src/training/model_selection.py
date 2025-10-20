@@ -14,6 +14,7 @@ from src.features.transformers import FeatureFrameAssembler
 from src.models.pipelines import PipelineConfig, build_training_pipeline
 from src.training.dataset import TemporalSplitResult
 from src.training.feature_selection import (
+    CorrelatedFeatureDropper,
     FeatureSelectionResult,
     TrackingClient,
     run_rfecv_selection,
@@ -57,6 +58,7 @@ class FeatureSelectionConfig:
     artifact_name: str = "selected_features.json"
     tracking_artifact_path: str = "feature_selection"
     min_samples_required: int | None = None
+    correlation_threshold: float | None = None
 
 
 @dataclass(slots=True)
@@ -115,11 +117,33 @@ def run_model_selection(
 
     assembler_params = _build_assembler_params(pipeline_config)
     train_frame = splits.train_frame
+    horizon = getattr(splits, "horizon", 1)
+    label_column = getattr(splits, "label_column", None)
 
     assembler = FeatureFrameAssembler(**assembler_params)
     feature_matrix = assembler.fit_transform(train_frame).dropna()
     aligned_target = splits.y_train.loc[feature_matrix.index]
     train_subset = train_frame.loc[feature_matrix.index]
+
+    dropped_correlated: tuple[str, ...] = ()
+    if selection_config.correlation_threshold is not None:
+        dropper = CorrelatedFeatureDropper(
+            threshold=float(selection_config.correlation_threshold)
+        )
+        base_columns_in_matrix = tuple(
+            column
+            for column in train_subset.columns
+            if column in feature_matrix.columns
+        )
+        feature_matrix, dropped_correlated = dropper.transform(
+            feature_matrix,
+            columns=base_columns_in_matrix,
+        )
+        if dropped_correlated:
+            print(
+                "[feature-selection] Columnas eliminadas por alta correlación "
+                f"(>{selection_config.correlation_threshold}): {list(dropped_correlated)}"
+            )
 
     usable_rows = len(feature_matrix)
     min_samples_required = selection_config.min_samples_required or (
@@ -130,6 +154,7 @@ def run_model_selection(
         selection_result = _create_passthrough_selection_result(
             feature_matrix,
             selection_config.estimator.__class__.__name__,
+            dropped_features=dropped_correlated,
         )
         print(
             "[feature-selection] RFECV omitido: muestras disponibles "
@@ -155,7 +180,13 @@ def run_model_selection(
             artifact_name=selection_config.artifact_name,
             tracking_client=None,
             tracking_artifact_path=selection_config.tracking_artifact_path,
+            pre_dropped_features=dropped_correlated,
         )
+
+    if label_column is not None:
+        train_features = train_subset.drop(columns=[label_column], errors="ignore")
+    else:
+        train_features = train_subset
 
     candidate_results: list[CandidateResult] = []
     for definition in candidates:
@@ -178,8 +209,11 @@ def run_model_selection(
                 {
                     "feature_selection_estimator": selection_config.estimator.__class__.__name__,
                     "selected_features_count": len(selection_result.selected_features),
+                    "horizon": horizon,
                 }
             )
+            if label_column is not None:
+                tracker.set_tags({"label_column": label_column})
 
         candidate_pipeline = _build_candidate_pipeline(
             pipeline_config,
@@ -190,7 +224,7 @@ def run_model_selection(
         if definition.tuning is not None:
             tuning_result = run_hyperparameter_search(
                 candidate_pipeline,
-                X=train_subset,
+                X=train_features,
                 y=aligned_target,
                 config=definition.tuning,
                 tracker=tracker,
@@ -204,10 +238,20 @@ def run_model_selection(
                     {f"tuning__{k}": v for k, v in tuning_result.best_params.items()}
                 )
         else:
-            candidate_pipeline.fit(train_subset, aligned_target)
+            candidate_pipeline.fit(train_features, aligned_target)
 
-        val_metrics = _evaluate_candidate(candidate_pipeline, splits.val_frame, splits.y_val)
-        test_metrics = _evaluate_candidate(candidate_pipeline, splits.test_frame, splits.y_test)
+        val_metrics = _evaluate_candidate(
+            candidate_pipeline,
+            splits.val_frame,
+            splits.y_val,
+            label_column=label_column,
+        )
+        test_metrics = _evaluate_candidate(
+            candidate_pipeline,
+            splits.test_frame,
+            splits.y_test,
+            label_column=label_column,
+        )
 
         if tracker is not None:
             tracker.log_metrics({f"val_{k}": v for k, v in val_metrics.items()})
@@ -288,9 +332,18 @@ def _evaluate_candidate(
     pipeline: Pipeline,
     frame: pd.DataFrame,
     target: pd.Series,
+    *,
+    label_column: str | None = None,
 ) -> dict[str, float]:
     """Calcula métricas estándar de regresión en el dataset proporcionado."""
-    predictions = _predict_with_index(pipeline, frame)
+    if label_column is None and target.name:
+        label_column = target.name
+
+    features_frame = frame
+    if label_column:
+        features_frame = frame.drop(columns=[label_column], errors="ignore")
+
+    predictions = _predict_with_index(pipeline, features_frame)
 
     aligned_target = target.loc[predictions.index]
     mask = aligned_target.notna()
@@ -338,6 +391,8 @@ def _to_path(path: str | Path | None) -> Path | None:
 def _create_passthrough_selection_result(
     feature_matrix: pd.DataFrame,
     estimator_name: str,
+    *,
+    dropped_features: Sequence[str] | None = None,
 ) -> FeatureSelectionResult:
     """Genera un resultado de selección trivial usando todas las columnas."""
     columns = list(feature_matrix.columns)
@@ -349,4 +404,5 @@ def _create_passthrough_selection_result(
         validation_scores=tuple(),
         estimator_name=estimator_name,
         artifact_path=None,
+        dropped_features=tuple(dropped_features) if dropped_features else (),
     )

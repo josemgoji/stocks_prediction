@@ -53,22 +53,6 @@ services:
     volumes:
       - mlflow_data:/mlflow/artifacts
 
-  api:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.api
-    platform: linux/amd64
-    container_name: stocks_api
-    restart: always
-    ports:
-      - "8000:8000"
-    environment:
-      - API_MLFLOW_TRACKING_URI=http://mlflow:8888
-      - API_MLFLOW_REGISTRY_URI=http://mlflow:8888
-      - FRED_API_KEY=${FRED_API_KEY:-}
-    depends_on:
-      - mlflow
-
 volumes:
   postgres_data:
     driver: local

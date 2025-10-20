@@ -6,7 +6,7 @@ Repositorio de una prueba técnica centrada en un pipeline de series financieras
 
 ```
 conf/                   # Configuraciones YAML (datasets, entrenamiento, modelo)
-docker/                 # Dockerfiles para MLflow y API
+docker/                 # Dockerfiles para MLflow (servidor y dependencias)
 notebooks/              # Exploración adicional (EDA)
 src/
   application/          # API FastAPI (`api.py`) y casos de uso de negocio
@@ -18,7 +18,7 @@ src/
   training/             # Dataset split, selección de modelos y entrenamiento
   utils/                # utilidades compartidas (`load_yaml`)
 artifacts/              # Resultados locales (feature selection, tuning, etc.)
-docker-compose.yml      # Orquestación de MLflow + MinIO + Postgres + API
+docker-compose.yml      # Orquestación de MLflow + MinIO + Postgres
 ```
 
 ## Dependencias locales
@@ -72,17 +72,16 @@ python src/serving/generate_prediction.py \
 
 ## Infraestructura con Docker Compose
 
-El `docker-compose.yml` levanta:
+El `docker-compose.yml` levanta únicamente los servicios de soporte de MLflow:
 
 - `postgres` (backend MLflow)
 - `minio` (artifacts S3)
 - `mlflow` (servidor MLflow)
-- `api` (FastAPI)
 
 Comandos útiles:
 
 ```bash
-# Construir y levantar todos los servicios
+# Construir y levantar los servicios auxiliares
 docker compose up --build -d
 
 # Listar estado de los contenedores
@@ -92,7 +91,4 @@ docker compose ps
 docker compose down
 ```
 
-Endpoints:
-- MLflow UI: `http://127.0.0.1:8888`
-- API: `http://127.0.0.1:8000/docs`
-
+MLflow UI queda expuesta en `http://127.0.0.1:8888`. La API FastAPI se ejecuta únicamente en local (ver sección anterior).

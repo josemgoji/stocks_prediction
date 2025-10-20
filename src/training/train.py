@@ -20,8 +20,7 @@ from src.training.model_selection import (
 )
 from src.training.hyperparameter_tuning import HyperparameterTuningConfig
 
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
-from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 
 def run_training(
@@ -89,14 +88,12 @@ def run_training(
         for candidate in candidates_cfg
     ]
 
-    created_tracker = False
     tracker_cfg = training_cfg.get("mlflow")
     if tracker is None:
         tracker = _build_mlflow_tracker(tracker_cfg)
-        created_tracker = tracker is not None
 
     parent_run_active = False
-    if created_tracker and tracker is not None and hasattr(tracker, "start_parent_run"):
+    if tracker is not None and hasattr(tracker, "start_parent_run"):
         tracker.start_parent_run()
         parent_run_active = True
         tracker.set_tags(
@@ -127,7 +124,7 @@ def run_training(
         primary_metric=training_cfg.get("primary_metric", "rmse"),
     )
 
-    if tracker is not None and (parent_run_active or not created_tracker):
+    if tracker is not None:
         best = outcome.best_candidate
         signature = None
         input_example = None
@@ -225,24 +222,6 @@ def _build_extra_steps(config: Sequence[Mapping[str, Any]] | None):
             steps.append((name, StandardScaler()))
         elif kind == "minmax_scaler":
             steps.append((name, MinMaxScaler()))
-        elif kind == "robust_scaler":
-            steps.append((name, RobustScaler()))
-        elif kind == "column_transformer":
-            transformers = step_cfg.get("transformers", [])
-            column_transformers = []
-            for transformer in transformers:
-                transformer_name = transformer["name"]
-                transformer_type = transformer["type"]
-                columns = transformer.get("columns", [])
-                if transformer_type == "standard_scaler":
-                    column_transformers.append((transformer_name, StandardScaler(), columns))
-                elif transformer_type == "minmax_scaler":
-                    column_transformers.append((transformer_name, MinMaxScaler(), columns))
-                elif transformer_type == "robust_scaler":
-                    column_transformers.append((transformer_name, RobustScaler(), columns))
-                else:
-                    raise ValueError(f"Tipo de transformer no soportado: {transformer_type}")
-            steps.append((name, ColumnTransformer(column_transformers, remainder="passthrough")))
         else:
             raise ValueError(f"Tipo de paso extra no soportado: {kind}")
     return steps
@@ -274,14 +253,18 @@ def _build_candidate_definition(config: Mapping[str, Any]) -> CandidateDefinitio
     )
 
 
-def _build_mlflow_tracker(config: Mapping[str, Any] | None) -> MLflowTracker | None:
-    """Construye un tracker de MLflow cuando la configuración lo habilita."""
+def _build_mlflow_tracker(config: Mapping[str, Any] | None) -> MLflowTracker:
+    """Construye un tracker de MLflow; requiere configuración explícita."""
     if not config:
-        return None
+        raise ValueError(
+            "Debes definir la sección 'mlflow' en training.yaml para ejecutar el entrenamiento."
+        )
     if not config.get("enabled", True):
-        return None
+        raise ValueError("La sección 'mlflow' debe tener 'enabled: true'.")
 
     tracking_uri = config.get("tracking_uri")
+    if not tracking_uri:
+        raise ValueError("Define `mlflow.tracking_uri` en training.yaml para habilitar el tracking.")
     experiment_name = config.get("experiment_name")
     default_tags = config.get("tags") or {}
     run_name = config.get("run_name", "model_selection")
@@ -312,7 +295,7 @@ def _build_mlflow_tracker(config: Mapping[str, Any] | None) -> MLflowTracker | N
                 bucket.load()
             except Exception:
                 bucket.create()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(
                 f"[mlflow] No se pudo asegurar el bucket de artefactos '{artifact_bucket}': {exc}"
             )

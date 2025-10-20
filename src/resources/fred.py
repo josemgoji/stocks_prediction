@@ -1,4 +1,4 @@
-"""Cliente sencillo para obtener series macroeconómicas desde FRED."""
+"""Servicio para obtener series macroeconómicas desde FRED."""
 
 from datetime import datetime
 from typing import Mapping, Optional

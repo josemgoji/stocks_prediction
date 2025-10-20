@@ -39,7 +39,6 @@ feature_selection:
   artifact_name: selected_features.json
   tracking_artifact_path: feature_selection
 
-# Definición de candidatos para la competencia de modelos
 candidates:
   - name: linear_regression
     estimator: linear_regression

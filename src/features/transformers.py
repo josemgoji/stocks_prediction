@@ -19,6 +19,49 @@ _SCALER_REGISTRY = {
 }
 
 
+def build_feature_matrix(
+    frame: pd.DataFrame,
+    *,
+    target_column: str,
+    lags: Iterable[int],
+    returns: Iterable[int],
+    rolling_windows: Iterable[int],
+    high_column: str | None,
+    low_column: str | None,
+    volume_column: str | None,
+    price_for_nominal: str | None,
+    attach_base: bool,
+    base_columns: Iterable[str] | None,
+) -> pd.DataFrame:
+    """Genera el DataFrame de features aplicando `assemble_feature_frame` y reglas de adjuntos."""
+    feature_frame = assemble_feature_frame(
+        frame,
+        target_column,
+        lags=tuple(lags),
+        returns=tuple(returns),
+        rolling_windows=tuple(rolling_windows),
+        high_column=high_column,
+        low_column=low_column,
+        volume_column=volume_column,
+        price_for_nominal=price_for_nominal,
+    )
+    feature_frame = feature_frame.dropna(axis=1, how="all")
+
+    if not attach_base:
+        return feature_frame
+
+    if base_columns is not None:
+        base = frame.loc[:, list(base_columns)]
+    else:
+        base = frame.drop(columns=[target_column], errors="ignore")
+        label_prefix = f"{target_column}_target"
+        label_columns = [col for col in base.columns if col.startswith(label_prefix)]
+        if label_columns:
+            base = base.drop(columns=label_columns)
+
+    return pd.concat([base, feature_frame], axis=1)
+
+
 class FeatureFrameAssembler(BaseEstimator, TransformerMixin):
     """Genera un paquete completo de features financieros a partir de una columna objetivo."""
 
@@ -58,7 +101,19 @@ class FeatureFrameAssembler(BaseEstimator, TransformerMixin):
     def fit(self, X: pd.DataFrame, y: pd.Series | None = None):  # noqa: N803
         self._validate_columns(X)
         self._lag_values = self._normalize_lags(self.lags)
-        feature_frame = self._assemble_frame(X)
+        feature_frame = build_feature_matrix(
+            X,
+            target_column=self.target_column,
+            lags=self._lag_values,
+            returns=self.returns,
+            rolling_windows=self.rolling_windows,
+            high_column=self.high_column,
+            low_column=self.low_column,
+            volume_column=self.volume_column,
+            price_for_nominal=self.price_for_nominal,
+            attach_base=self.attach_base,
+            base_columns=self.base_columns,
+        )
         self._feature_columns = tuple(feature_frame.columns)
 
         if self.scaler is None:
@@ -91,7 +146,19 @@ class FeatureFrameAssembler(BaseEstimator, TransformerMixin):
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:  # noqa: N803
         self._validate_columns(X)
         self._lag_values = self._normalize_lags(self.lags)
-        feature_frame = self._assemble_frame(X)
+        feature_frame = build_feature_matrix(
+            X,
+            target_column=self.target_column,
+            lags=self._lag_values,
+            returns=self.returns,
+            rolling_windows=self.rolling_windows,
+            high_column=self.high_column,
+            low_column=self.low_column,
+            volume_column=self.volume_column,
+            price_for_nominal=self.price_for_nominal,
+            attach_base=self.attach_base,
+            base_columns=self.base_columns,
+        )
 
         if self._feature_columns is not None:
             for column in self._feature_columns:
@@ -146,31 +213,6 @@ class FeatureFrameAssembler(BaseEstimator, TransformerMixin):
             raise ValueError("Todos los `lags` deben ser enteros positivos.")
 
         return lag_values
-
-    def _assemble_frame(self, X: pd.DataFrame) -> pd.DataFrame:  # noqa: N803
-        feature_frame = assemble_feature_frame(
-            X,
-            self.target_column,
-            lags=self._lag_values,
-            returns=self.returns,
-            rolling_windows=self.rolling_windows,
-            high_column=self.high_column,
-            low_column=self.low_column,
-            volume_column=self.volume_column,
-            price_for_nominal=self.price_for_nominal,
-        )
-        feature_frame = feature_frame.dropna(axis=1, how="all")
-        if self.attach_base:
-            if self.base_columns is not None:
-                base = X.loc[:, list(self.base_columns)]
-            else:
-                base = X.drop(columns=[self.target_column], errors="ignore")
-                label_prefix = f"{self.target_column}_target"
-                label_columns = [col for col in base.columns if col.startswith(label_prefix)]
-                if label_columns:
-                    base = base.drop(columns=label_columns)
-            feature_frame = pd.concat([base, feature_frame], axis=1)
-        return feature_frame
 
     def _build_scaler(self) -> BaseEstimator:
         if isinstance(self.scaler, str):
@@ -267,39 +309,3 @@ class FillNaTransformer(BaseEstimator, TransformerMixin):
         raise TypeError(
             "FillNaTransformer solo soporta entradas tipo pandas.DataFrame o pandas.Series."
         )
-
-    def _assemble_frame(self, X: pd.DataFrame) -> pd.DataFrame:  # noqa: N803
-        feature_frame = assemble_feature_frame(
-            X,
-            self.target_column,
-            lags=self.lags,
-            returns=self.returns,
-            rolling_windows=self.rolling_windows,
-            high_column=self.high_column,
-            low_column=self.low_column,
-            volume_column=self.volume_column,
-            price_for_nominal=self.price_for_nominal,
-        )
-        feature_frame = feature_frame.dropna(axis=1, how="all")
-        if self.attach_base:
-            if self.base_columns is not None:
-                base = X.loc[:, list(self.base_columns)]
-            else:
-                base = X.copy()
-            feature_frame = pd.concat([base, feature_frame], axis=1)
-        return feature_frame
-
-    def _build_scaler(self) -> BaseEstimator:
-        if isinstance(self.scaler, str):
-            try:
-                scaler_cls = _SCALER_REGISTRY[self.scaler.lower()]
-            except KeyError as exc:
-                raise ValueError(
-                    f"Scaler '{self.scaler}' no soportado. Opciones: {list(_SCALER_REGISTRY)}"
-                ) from exc
-            return scaler_cls()
-
-        if isinstance(self.scaler, BaseEstimator):
-            return clone(self.scaler)
-
-        raise ValueError("`scaler` debe ser un string soportado o un estimador de scikit-learn.")

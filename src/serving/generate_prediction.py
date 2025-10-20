@@ -64,8 +64,14 @@ def main() -> None:
     tracking_uri = mlflow_cfg.get("tracking_uri")
     registry_uri = registry_cfg.get("registry_uri") or tracking_uri
     model_name = registry_cfg.get("model_name")
+    if not tracking_uri:
+        raise ValueError("Configura `mlflow.tracking_uri` en training.yaml para habilitar el serving.")
     if not model_name:
         raise ValueError("Configura `model_registry.model_name` en training.yaml.")
+    if not registry_uri:
+        raise ValueError(
+            "Configura `model_registry.registry_uri` o define `mlflow.tracking_uri` para ubicar el modelo."
+        )
 
     configure_mlflow_environment(mlflow_cfg)
 

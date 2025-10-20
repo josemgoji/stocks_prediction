@@ -1,12 +1,12 @@
 {
   "ticker": "NVDA",
-  "generated_at": "2025-10-20T04:43:01.752787",
-  "lookback_start": "2025-07-28T04:42:58.967128+00:00",
-  "lookback_end": "2025-10-20T04:42:58.967128+00:00",
+  "generated_at": "2025-10-20T05:00:35.659073",
+  "lookback_start": "2025-07-28T05:00:32.771307+00:00",
+  "lookback_end": "2025-10-20T05:00:32.771307+00:00",
   "horizon": 20,
   "prediction_date": "2025-11-14",
   "prediction_value": 186.34329143970626,
   "model_name": "StocksPredictionModel",
-  "model_version": "44",
-  "model_uri": "models:/StocksPredictionModel/44"
+  "model_version": "45",
+  "model_uri": "models:/StocksPredictionModel/45"
 }

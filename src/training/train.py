@@ -1,7 +1,5 @@
 """Punto de entrada para entrenar modelos utilizando configuración YAML."""
 
-import yaml
-
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -19,6 +17,7 @@ from src.training.model_selection import (
     run_model_selection,
 )
 from src.training.hyperparameter_tuning import HyperparameterTuningConfig
+from src.utils.io import load_yaml
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
@@ -30,8 +29,8 @@ def run_training(
     tracker: ExperimentTracker | None = None,
 ) -> ModelSelectionOutcome:
     """Ejecuta la competencia de modelos completa."""
-    data_cfg = _load_yaml(data_config_path)
-    training_cfg = _load_yaml(training_config_path)
+    data_cfg = load_yaml(data_config_path)
+    training_cfg = load_yaml(training_config_path)
 
     dataset = load_dataset(data_cfg)
 
@@ -200,13 +199,6 @@ def run_training(
         tracker.end_parent_run()
 
     return outcome
-
-
-def _load_yaml(path: Path) -> Mapping[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(f"No se encontró la configuración en {path}")
-    with path.open("r", encoding="utf-8") as file:
-        return yaml.safe_load(file) or {}
 
 
 def _build_extra_steps(config: Sequence[Mapping[str, Any]] | None):

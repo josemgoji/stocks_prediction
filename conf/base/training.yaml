@@ -71,7 +71,7 @@ candidates:
       - type: standard_scaler
         name: knn_standard_scaler
 
-primary_metric: rmse
+primary_metric: mape
 
 mlflow:
   enabled: true

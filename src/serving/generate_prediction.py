@@ -7,11 +7,11 @@ from typing import Any, Mapping
 
 import mlflow
 import pandas as pd
-import yaml
 
 from src.application.use_cases.fetch_market_data import fetch_market_data
 from src.registry.mlflow_client import configure_mlflow_environment
 from src.serving.model_loader import load_latest_model_version
+from src.utils.io import load_yaml
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,29 +49,47 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    result = generate_prediction_from_configs(
+        data_config_path=args.data_config,
+        training_config_path=args.training_config,
+        prediction_date=args.prediction_date,
+    )
+    print(json.dumps(result, indent=2))
+    if args.output_path:
+        args.output_path.parent.mkdir(parents=True, exist_ok=True)
+        args.output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
-    data_cfg = _load_yaml(args.data_config)
-    training_cfg = _load_yaml(args.training_config)
 
-    ticker = str(data_cfg.get("ticker", "")).strip()
-    if not ticker:
-        raise ValueError("Configura un `ticker` en data.yaml.")
+def generate_prediction_from_configs(
+    *,
+    data_config_path: Path,
+    training_config_path: Path,
+    prediction_date: str | None = None,
+) -> dict[str, Any]:
+    data_cfg = load_yaml(data_config_path)
+    training_cfg = load_yaml(training_config_path)
+    return _generate_prediction_from_configs(
+        data_cfg=data_cfg,
+        training_cfg=training_cfg,
+        prediction_date=prediction_date,
+    )
+
+
+def _generate_prediction_from_configs(
+    *,
+    data_cfg: Mapping[str, Any],
+    training_cfg: Mapping[str, Any],
+    prediction_date: str | None,
+) -> dict[str, Any]:
+    ticker = str(data_cfg["ticker"]).strip()
 
     horizon = int(training_cfg.get("horizon", 1))
     mlflow_cfg = training_cfg.get("mlflow") or {}
     registry_cfg = training_cfg.get("model_registry") or {}
 
-    tracking_uri = mlflow_cfg.get("tracking_uri")
+    tracking_uri = mlflow_cfg["tracking_uri"]
     registry_uri = registry_cfg.get("registry_uri") or tracking_uri
-    model_name = registry_cfg.get("model_name")
-    if not tracking_uri:
-        raise ValueError("Configura `mlflow.tracking_uri` en training.yaml para habilitar el serving.")
-    if not model_name:
-        raise ValueError("Configura `model_registry.model_name` en training.yaml.")
-    if not registry_uri:
-        raise ValueError(
-            "Configura `model_registry.registry_uri` o define `mlflow.tracking_uri` para ubicar el modelo."
-        )
+    model_name = registry_cfg["model_name"]
 
     configure_mlflow_environment(mlflow_cfg)
 
@@ -86,11 +104,11 @@ def main() -> None:
     run_id = loaded_model.run_id
 
     required_history = _infer_history_window(pipeline, run_id=run_id)
-    end_ts = _resolve_prediction_date(args.prediction_date)
+    end_ts = _resolve_prediction_date(prediction_date)
     start_ts = end_ts - pd.tseries.offsets.BDay(required_history)
 
     config_start = data_cfg.get("start")
-    if config_start:
+    if config_start is not None:
         configured_start = pd.Timestamp(datetime.fromisoformat(str(config_start))).tz_localize("UTC")
         start_ts = max(start_ts, configured_start)
 
@@ -133,11 +151,7 @@ def main() -> None:
         "model_uri": model_uri,
     }
 
-    print(json.dumps(result, indent=2))
-
-    if args.output_path:
-        args.output_path.parent.mkdir(parents=True, exist_ok=True)
-        args.output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return result
 
 
 def _infer_history_window(pipeline: Any, *, run_id: str | None) -> int:
@@ -173,13 +187,6 @@ def _to_series(predictions: Any, index: pd.Index) -> pd.Series:
     return series
 
 
-def _load_yaml(path: Path) -> Mapping[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(f"No se encontró la configuración en {path}")
-    with path.open("r", encoding="utf-8") as file:
-        return yaml.safe_load(file) or {}
-
-
 def _align_with_model_signature(frame: pd.DataFrame, model: Any) -> pd.DataFrame:
     metadata = getattr(model, "metadata", None)
     if metadata is None or not hasattr(metadata, "get_input_schema"):
@@ -187,7 +194,7 @@ def _align_with_model_signature(frame: pd.DataFrame, model: Any) -> pd.DataFrame
 
     try:
         schema = metadata.get_input_schema()
-    except Exception:  # noqa: BLE001
+    except Exception: 
         return frame
 
     if not schema or not getattr(schema, "inputs", None):
@@ -208,7 +215,7 @@ def _align_with_model_signature(frame: pd.DataFrame, model: Any) -> pd.DataFrame
         if dtype and column in aligned.columns:
             try:
                 aligned[column] = aligned[column].astype(dtype)
-            except Exception:  # noqa: BLE001
+            except Exception: 
                 pass
 
     extra = [column for column in aligned.columns if column not in required_columns]
@@ -246,8 +253,8 @@ def _resolve_prediction_date(raw: str | None) -> pd.Timestamp:
         return pd.Timestamp.now(tz="UTC")
     try:
         ts = pd.Timestamp(raw)
-    except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"Fecha de predicción inválida: {raw}") from exc
+    except Exception:  # noqa: BLE001
+        return pd.Timestamp.now(tz="UTC")
     if ts.tzinfo is None:
         ts = ts.tz_localize("UTC")
     else:
@@ -258,7 +265,7 @@ def _resolve_prediction_date(raw: str | None) -> pd.Timestamp:
 def _history_from_mlflow(run_id: str) -> int | None:
     try:
         run = mlflow.get_run(run_id)
-    except Exception:  # noqa: BLE001
+    except Exception: 
         return None
 
     candidates: list[int] = []
@@ -297,7 +304,7 @@ def _max_config_value(value: Any) -> int:
         return max(ints) if ints else 1
     try:
         return max(int(value), 1)
-    except Exception:  # noqa: BLE001
+    except Exception: 
         return 1
 
 

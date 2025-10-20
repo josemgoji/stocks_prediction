@@ -1,6 +1,5 @@
-import argparse
-import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -14,73 +13,15 @@ from src.serving.model_loader import load_latest_model_version
 from src.utils.io import load_yaml
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Descarga datos recientes y genera una predicción con el último modelo registrado en MLflow."
-    )
-    parser.add_argument(
-        "--data-config",
-        type=Path,
-        default=Path("conf/base/data.yaml"),
-        help="Ruta al archivo de configuración de datos.",
-    )
-    parser.add_argument(
-        "--training-config",
-        type=Path,
-        default=Path("conf/base/training.yaml"),
-        help="Ruta al archivo de entrenamiento.",
-    )
-    parser.add_argument(
-        "--output-path",
-        type=Path,
-        default=None,
-        help="Ruta opcional para guardar la predicción en formato JSON.",
-    )
-    parser.add_argument(
-        "--prediction-date",
-        type=str,
-        default=None,
-        help=(
-            "Fecha base (ISO 8601) para la predicción. Si no se indica se usa la fecha actual."
-        ),
-    )
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    result = generate_prediction_from_configs(
-        data_config_path=args.data_config,
-        training_config_path=args.training_config,
-        prediction_date=args.prediction_date,
-    )
-    print(json.dumps(result, indent=2))
-    if args.output_path:
-        args.output_path.parent.mkdir(parents=True, exist_ok=True)
-        args.output_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-
-
 def generate_prediction_from_configs(
     *,
     data_config_path: Path,
     training_config_path: Path,
     prediction_date: str | None = None,
 ) -> dict[str, Any]:
-    data_cfg = load_yaml(data_config_path)
-    training_cfg = load_yaml(training_config_path)
-    return _generate_prediction_from_configs(
-        data_cfg=data_cfg,
-        training_cfg=training_cfg,
-        prediction_date=prediction_date,
-    )
-
-
-def _generate_prediction_from_configs(
-    *,
-    data_cfg: Mapping[str, Any],
-    training_cfg: Mapping[str, Any],
-    prediction_date: str | None,
-) -> dict[str, Any]:
+    """Carga configuraciones, obtiene datos recientes y retorna la predicción."""
+    data_cfg: Mapping[str, Any] = load_yaml(data_config_path)
+    training_cfg: Mapping[str, Any] = load_yaml(training_config_path)
     ticker = str(data_cfg["ticker"]).strip()
 
     horizon = int(training_cfg.get("horizon", 1))
@@ -104,7 +45,19 @@ def _generate_prediction_from_configs(
     run_id = loaded_model.run_id
 
     required_history = _infer_history_window(pipeline, run_id=run_id)
-    end_ts = _resolve_prediction_date(prediction_date)
+
+    if prediction_date:
+        try:
+            end_ts = pd.Timestamp(prediction_date)
+        except Exception:  # noqa: BLE001
+            end_ts = pd.Timestamp.now(tz="UTC")
+    else:
+        end_ts = pd.Timestamp.now(tz="UTC")
+
+    if end_ts.tzinfo is None:
+        end_ts = end_ts.tz_localize("UTC")
+    else:
+        end_ts = end_ts.tz_convert("UTC")
     start_ts = end_ts - pd.tseries.offsets.BDay(required_history)
 
     config_start = data_cfg.get("start")
@@ -113,26 +66,42 @@ def _generate_prediction_from_configs(
         start_ts = max(start_ts, configured_start)
 
     interval = data_cfg.get("interval")
-    macro_cfg = data_cfg.get("macro") or {}
-    macro_series = (macro_cfg.get("series") or None) if isinstance(macro_cfg, Mapping) else None
-    macro_fill_method = macro_cfg.get("fill_method") if isinstance(macro_cfg, Mapping) else None
+    auto_adjust = data_cfg.get("auto_adjust")
+    macro_raw = data_cfg.get("macro")
+    macro_cfg = macro_raw if isinstance(macro_raw, Mapping) else {}
 
     dataset = fetch_market_data(
         ticker=ticker,
         start=start_ts.to_pydatetime(),
         end=end_ts.to_pydatetime(),
         interval=interval,
-        macro_series=macro_series,
-        macro_fill_method=macro_fill_method,
+        auto_adjust=auto_adjust,
+        macro_series=macro_cfg.get("series"),
+        macro_fill_method=macro_cfg.get("fill_method"),
         fred_api_key=os.getenv("FRED_API_KEY"),
     ).sort_index()
     dataset = dataset.loc[~dataset.index.duplicated(keep="last")]
 
-    dataset = _align_with_model_signature(dataset, pipeline)
-    dataset = _ensure_numeric_compatibility(dataset)
+    if dataset.empty:
+        raise ValueError("No hay datos suficientes para generar la predicción.")
+
+    numeric_columns = dataset.select_dtypes(include=["number"]).columns
+    if len(numeric_columns) != len(dataset.columns):
+        dataset = dataset.copy()
+    dataset = dataset.astype({column: "float64" for column in numeric_columns})
 
     predictions = pipeline.predict(dataset)
-    prediction_series = _to_series(predictions, dataset.index)
+    if isinstance(predictions, pd.Series):
+        prediction_series = predictions
+    elif isinstance(predictions, pd.DataFrame):
+        prediction_series = predictions.iloc[:, 0]
+    else:
+        prediction_series = pd.Series(
+            predictions,
+            index=dataset.index[-len(predictions) :],
+            dtype=float,
+            name="prediction",
+        )
 
     latest_timestamp = pd.Timestamp(prediction_series.index[-1])
     latest_timestamp = latest_timestamp.tz_convert(None) if latest_timestamp.tzinfo else latest_timestamp
@@ -155,158 +124,47 @@ def _generate_prediction_from_configs(
 
 
 def _infer_history_window(pipeline: Any, *, run_id: str | None) -> int:
-    history_from_metadata = _history_from_mlflow(run_id) if run_id else None
-    if history_from_metadata:
-        return history_from_metadata
+    """Estimación del lookback necesario usando metadatos MLflow o el assembler."""
+    if run_id:
+        try:
+            run = mlflow.get_run(run_id)
+        except Exception:  # noqa: BLE001
+            run = None
+        if run:
+            raw_values = [
+                str(value)
+                for source in (run.data.params, run.data.tags)
+                for key, value in source.items()
+                if "lag" in key.lower()
+            ]
+            matches = [int(match) for value in raw_values for match in re.findall(r"\d+", value)]
+            if matches:
+                return max(matches)
 
     assembler = getattr(pipeline, "named_steps", {}).get("feature_assembler")
     if assembler is None:
         return 60
 
-    lag_values = getattr(assembler, "_lag_values", None)
-    if lag_values:
-        max_lag = max(int(value) for value in lag_values if value is not None)
-    else:
-        max_lag = _max_config_value(getattr(assembler, "lags", 1))
-
-    max_return = _max_config_value(getattr(assembler, "returns", 1))
-    max_rolling = _max_config_value(getattr(assembler, "rolling_windows", 1))
-
-    return max(max_lag, max_return, max_rolling)
-
-
-def _to_series(predictions: Any, index: pd.Index) -> pd.Series:
-    if isinstance(predictions, pd.Series):
-        return predictions
-    if isinstance(predictions, pd.DataFrame):
-        first_column = predictions.columns[0]
-        return predictions[first_column]
-    series = pd.Series(predictions).astype(float)
-    series.index = index[-len(series) :]
-    series.name = "prediction"
-    return series
-
-
-def _align_with_model_signature(frame: pd.DataFrame, model: Any) -> pd.DataFrame:
-    metadata = getattr(model, "metadata", None)
-    if metadata is None or not hasattr(metadata, "get_input_schema"):
-        return frame
-
-    try:
-        schema = metadata.get_input_schema()
-    except Exception: 
-        return frame
-
-    if not schema or not getattr(schema, "inputs", None):
-        return frame
-
-    required_columns = [col.name for col in schema.inputs]
-    dtype_mapping: dict[str, str | None] = {
-        col.name: _mlflow_dtype_to_numpy(getattr(col, "type", None))
-        for col in schema.inputs
-    }
-
-    aligned = frame.copy()
-    for column in required_columns:
-        if column not in aligned.columns:
-            aligned[column] = float("nan")
-
-    for column, dtype in dtype_mapping.items():
-        if dtype and column in aligned.columns:
-            try:
-                aligned[column] = aligned[column].astype(dtype)
-            except Exception: 
-                pass
-
-    extra = [column for column in aligned.columns if column not in required_columns]
-    ordered_columns = required_columns + extra
-    return aligned.loc[:, ordered_columns]
-
-
-def _ensure_numeric_compatibility(frame: pd.DataFrame) -> pd.DataFrame:
-    numeric_columns = frame.select_dtypes(include=["int", "uint", "int64", "uint64"]).columns
-    if len(numeric_columns) == 0:
-        return frame
-
-    converted = frame.copy()
-    converted.loc[:, numeric_columns] = converted.loc[:, numeric_columns].astype("float64")
-    return converted
-
-
-def _mlflow_dtype_to_numpy(dtype: Any) -> str | None:
-    if dtype is None:
-        return None
-    name = getattr(dtype, "name", str(dtype)).lower()
-    mapping = {
-        "double": "float64",
-        "float": "float32",
-        "integer": "int64",
-        "long": "int64",
-        "short": "int32",
-        "byte": "int8",
-    }
-    return mapping.get(name)
-
-
-def _resolve_prediction_date(raw: str | None) -> pd.Timestamp:
-    if raw is None:
-        return pd.Timestamp.now(tz="UTC")
-    try:
-        ts = pd.Timestamp(raw)
-    except Exception:  # noqa: BLE001
-        return pd.Timestamp.now(tz="UTC")
-    if ts.tzinfo is None:
-        ts = ts.tz_localize("UTC")
-    else:
-        ts = ts.tz_convert("UTC")
-    return ts
-
-
-def _history_from_mlflow(run_id: str) -> int | None:
-    try:
-        run = mlflow.get_run(run_id)
-    except Exception: 
-        return None
-
-    candidates: list[int] = []
-    for source in (run.data.params, run.data.tags):
-        for key, value in source.items():
-            if "lag" not in key.lower():
+    def _values_as_ints(value: Any) -> list[int]:
+        if value is None:
+            return []
+        iterable = value if isinstance(value, (list, tuple, set)) else [value]
+        ints: list[int] = []
+        for item in iterable:
+            if item is None:
                 continue
-            candidates.extend(_extract_ints(value))
+            try:
+                ints.append(int(item))
+            except Exception:  # noqa: BLE001
+                continue
+        return ints
 
-    if not candidates:
-        return None
+    lag_values = _values_as_ints(getattr(assembler, "_lag_values", None))
+    if not lag_values:
+        lag_values = _values_as_ints(getattr(assembler, "lags", 1))
+
+    candidates = [1, *lag_values]
+    candidates.extend(_values_as_ints(getattr(assembler, "returns", 1)))
+    candidates.extend(_values_as_ints(getattr(assembler, "rolling_windows", 1)))
+
     return max(candidates)
-
-
-def _extract_ints(raw: str) -> list[int]:
-    values: list[int] = []
-    current = ""
-    for char in raw:
-        if char.isdigit():
-            current += char
-        elif current:
-            values.append(int(current))
-            current = ""
-    if current:
-        values.append(int(current))
-    return values
-
-
-def _max_config_value(value: Any) -> int:
-    if value is None:
-        return 1
-    if isinstance(value, int):
-        return max(value, 1)
-    if isinstance(value, (list, tuple, set)):
-        ints = [int(item) for item in value if item is not None]
-        return max(ints) if ints else 1
-    try:
-        return max(int(value), 1)
-    except Exception: 
-        return 1
-
-
-if __name__ == "__main__":
-    main()

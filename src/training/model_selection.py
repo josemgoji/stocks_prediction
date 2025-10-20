@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -23,25 +23,6 @@ from src.training.hyperparameter_tuning import (
     HyperparameterTuningConfig,
     run_hyperparameter_search,
 )
-
-
-class ExperimentTracker(TrackingClient, Protocol):
-    """Protocolo mínimo para integración con sistemas de tracking (e.g. MLflow)."""
-
-    def start_run(self, run_name: str | None = None) -> Any:  # pragma: no cover - protocolo
-        ...
-
-    def end_run(self) -> None:  # pragma: no cover - protocolo
-        ...
-
-    def log_params(self, params: Mapping[str, Any]) -> None:  # pragma: no cover - protocolo
-        ...
-
-    def log_metrics(self, metrics: Mapping[str, float]) -> None:  # pragma: no cover - protocolo
-        ...
-
-    def set_tags(self, tags: Mapping[str, Any]) -> None:  # pragma: no cover - protocolo
-        ...
 
 
 @dataclass(slots=True)
@@ -108,7 +89,7 @@ def run_model_selection(
     pipeline_config: PipelineConfig,
     selection_config: FeatureSelectionConfig,
     candidates: Sequence[CandidateDefinition],
-    tracker: ExperimentTracker | None = None,
+    tracker: Any | None = None,
     primary_metric: str = "rmse",
 ) -> ModelSelectionOutcome:
     """Ejecuta selección de features y evalúa múltiples modelos candidatos."""

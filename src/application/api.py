@@ -35,6 +35,7 @@ class PredictionRequest(BaseModel):
 
 @app.post("/data/fetch")
 def fetch_data(request: FetchDataRequest) -> dict[str, Any]:
+    """Descarga datos históricos (y macro opcional) según la configuración."""
     try:
         params = _build_fetch_params(request.data_config_path, skip_macro=request.skip_macro)
         dataset = fetch_market_data(**params).sort_index()
@@ -47,8 +48,8 @@ def fetch_data(request: FetchDataRequest) -> dict[str, Any]:
     return {
         "ticker": params["ticker"],
         "rows": len(dataset),
-        "start": _to_iso(dataset.index.min()),
-        "end": _to_iso(dataset.index.max()),
+        "start": _to_serializable(dataset.index.min()),
+        "end": _to_serializable(dataset.index.max()),
         "head": _serialize_head(dataset),
         "saved_path": str(params.get("save_path")) if params.get("save_path") else None,
     }
@@ -56,6 +57,7 @@ def fetch_data(request: FetchDataRequest) -> dict[str, Any]:
 
 @app.post("/training/run")
 def train_model(request: TrainRequest) -> dict[str, Any]:
+    """Ejecución de entrenamiento completa tomando rutas declaradas en YAML."""
     try:
         outcome = run_training(
             data_config_path=request.data_config_path,
@@ -83,6 +85,7 @@ def train_model(request: TrainRequest) -> dict[str, Any]:
 
 @app.post("/prediction/run")
 def generate_prediction(request: PredictionRequest) -> dict[str, Any]:
+    """Genera la predicción más reciente aprovechando el modelo registrado."""
     try:
         return generate_prediction_from_configs(
             data_config_path=request.data_config_path,
@@ -94,6 +97,7 @@ def generate_prediction(request: PredictionRequest) -> dict[str, Any]:
 
 
 def _build_fetch_params(path: Path, *, skip_macro: bool) -> dict[str, Any]:
+    """Arma los parámetros de descarga de mercado a partir del YAML."""
     config = load_yaml(path)
     for key in ("ticker", "start", "end"):
         if key not in config:
@@ -124,16 +128,19 @@ def _build_fetch_params(path: Path, *, skip_macro: bool) -> dict[str, Any]:
 
 
 def _serialize_head(frame: pd.DataFrame, limit: int = 5) -> list[dict[str, Any]]:
+    """Convierte las primeras filas del dataframe en registros serializables."""
     head = frame.head(limit).reset_index()
     head = head.applymap(_to_serializable)
     return head.to_dict(orient="records")
 
 
 def _float_map(metrics: dict[str, Any]) -> dict[str, float | None]:
+    """Normaliza diccionarios de métricas a flotantes JSON-friendly."""
     return {key: _to_float(value) for key, value in metrics.items()}
 
 
 def _to_float(value: Any) -> float | None:
+    """Cast seguro a float devolviendo None cuando no aplica."""
     if value is None:
         return None
     if isinstance(value, (float, int)):
@@ -146,6 +153,7 @@ def _to_float(value: Any) -> float | None:
 
 
 def _to_serializable(value: Any) -> Any:
+    """Homogeneiza tipos numpy/pandas a objetos compatibles con JSON."""
     if isinstance(value, (pd.Timestamp, datetime)):
         return value.isoformat()
     if isinstance(value, (np.floating, np.float64, np.float32)):
@@ -155,13 +163,6 @@ def _to_serializable(value: Any) -> Any:
     if pd.isna(value):
         return None
     return value
-
-
-def _to_iso(value: Any) -> str:
-    if isinstance(value, (pd.Timestamp, datetime)):
-        timestamp = value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
-        return timestamp.isoformat()
-    return str(value)
 
 
 __all__ = ["app"]

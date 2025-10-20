@@ -11,7 +11,6 @@ from src.registry.mlflow_client import MLflowTracker, configure_mlflow_environme
 from src.training.dataset import load_dataset, temporal_train_val_test_split
 from src.training.model_selection import (
     CandidateDefinition,
-    ExperimentTracker,
     FeatureSelectionConfig,
     ModelSelectionOutcome,
     run_model_selection,
@@ -26,7 +25,7 @@ def run_training(
     *,
     data_config_path: Path,
     training_config_path: Path,
-    tracker: ExperimentTracker | None = None,
+    tracker: Any | None = None,
 ) -> ModelSelectionOutcome:
     """Ejecuta la competencia de modelos completa."""
     data_cfg = load_yaml(data_config_path)

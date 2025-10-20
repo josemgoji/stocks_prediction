@@ -10,7 +10,7 @@ from mlflow.tracking import MlflowClient
 
 
 class MLflowTracker:
-    """Implementa el protocolo `ExperimentTracker` usando MLflow."""
+    """Cliente MLflow compatible con los métodos usados en el entrenamiento."""
 
     def __init__(
         self,
@@ -31,9 +31,6 @@ class MLflowTracker:
         self._run_name = run_name or "model_selection"
         self._client = MlflowClient()
 
-    # --------------------------------------------------------------------- #
-    # Parent run helpers
-    # --------------------------------------------------------------------- #
     def start_parent_run(self) -> mlflow.ActiveRun:
         """Abre un run principal para agrupar los candidatos."""
         if self._parent_run is not None:
@@ -51,9 +48,6 @@ class MLflowTracker:
         mlflow.end_run()
         self._parent_run = None
 
-    # --------------------------------------------------------------------- #
-    # ExperimentTracker protocol
-    # --------------------------------------------------------------------- #
     def start_run(self, run_name: str | None = None) -> mlflow.ActiveRun:
         """Inicia un run (anidado si existe run principal)."""
         active = self._parent_run is not None
@@ -80,9 +74,7 @@ class MLflowTracker:
     def log_dict(self, dictionary: dict, artifact_file: str) -> None:
         mlflow.log_dict(dictionary, artifact_file)
 
-    # --------------------------------------------------------------------- #
-    # Convenience logging methods
-    # --------------------------------------------------------------------- #
+
     def log_text(self, text: str, artifact_file: str) -> None:
         mlflow.log_text(text, artifact_file)
 

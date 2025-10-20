@@ -1,7 +1,5 @@
 """Utilidades de entrada/salida compartidas entre módulos."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 

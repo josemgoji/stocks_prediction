@@ -1,2 +1,1 @@
-"""Model factories and pipelines."""
 

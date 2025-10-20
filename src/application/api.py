@@ -39,7 +39,7 @@ def fetch_data(request: FetchDataRequest) -> dict[str, Any]:
     try:
         params = _build_fetch_params(request.data_config_path, skip_macro=request.skip_macro)
         dataset = fetch_market_data(**params).sort_index()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if dataset.empty:
@@ -63,7 +63,7 @@ def train_model(request: TrainRequest) -> dict[str, Any]:
             data_config_path=request.data_config_path,
             training_config_path=request.training_config_path,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  
         raise HTTPException(status_code=500, detail=f"No se pudo completar el entrenamiento: {exc}") from exc
 
     best = outcome.best_candidate
@@ -92,7 +92,7 @@ def generate_prediction(request: PredictionRequest) -> dict[str, Any]:
             training_config_path=request.training_config_path,
             prediction_date=request.prediction_date,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  
         raise HTTPException(status_code=500, detail=f"No se pudo generar la predicción: {exc}") from exc
 
 

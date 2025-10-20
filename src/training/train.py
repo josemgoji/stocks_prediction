@@ -150,7 +150,7 @@ def run_training(
             predictions_sample = best.pipeline.predict(sample_for_signature)
             signature = infer_signature(sample_for_signature, predictions_sample)
             input_example = sample_for_signature.head(1)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  
             print("[mlflow] No se pudo generar signature del modelo:", exc)
 
         tracker.set_tags({"best_candidate": best.name})
@@ -170,7 +170,7 @@ def run_training(
                 {"selected_features": list(outcome.feature_selection.selected_features)},
                 "feature_selection/selected_features.json",
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  
             print("[mlflow] No se pudo registrar el artefacto de features:", exc)
 
         registry_cfg = training_cfg.get("model_registry", {})
@@ -191,7 +191,7 @@ def run_training(
                         model_name,
                         registry_cfg.get("tags"),
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  
                 print("[mlflow] No se pudo registrar el modelo automáticamente:", exc)
 
     if parent_run_active and tracker is not None and hasattr(tracker, "end_parent_run"):

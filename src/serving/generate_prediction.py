@@ -49,7 +49,7 @@ def generate_prediction_from_configs(
     if prediction_date:
         try:
             end_ts = pd.Timestamp(prediction_date)
-        except Exception:  # noqa: BLE001
+        except Exception:  
             end_ts = pd.Timestamp.now(tz="UTC")
     else:
         end_ts = pd.Timestamp.now(tz="UTC")
@@ -128,7 +128,7 @@ def _infer_history_window(pipeline: Any, *, run_id: str | None) -> int:
     if run_id:
         try:
             run = mlflow.get_run(run_id)
-        except Exception:  # noqa: BLE001
+        except Exception:  
             run = None
         if run:
             raw_values = [
@@ -155,7 +155,7 @@ def _infer_history_window(pipeline: Any, *, run_id: str | None) -> int:
                 continue
             try:
                 ints.append(int(item))
-            except Exception:  # noqa: BLE001
+            except Exception:  
                 continue
         return ints
 

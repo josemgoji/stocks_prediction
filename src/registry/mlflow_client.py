@@ -74,7 +74,6 @@ class MLflowTracker:
     def log_dict(self, dictionary: dict, artifact_file: str) -> None:
         mlflow.log_dict(dictionary, artifact_file)
 
-
     def log_text(self, text: str, artifact_file: str) -> None:
         mlflow.log_text(text, artifact_file)
 
@@ -112,28 +111,93 @@ class MLflowTracker:
                 self._client.set_registered_model_tag(name, key, str(value))
         return result
 
+    def ensure_artifact_bucket(self, bucket_name: str, config: Mapping[str, Any] | None = None) -> None:
+        """Asegura que el bucket S3 existe para artefactos."""
+        if not bucket_name:
+            return
+            
+        try:
+            import boto3
+            from botocore.config import Config
+            
+            # Usar configuración centralizada
+            s3_config = _get_s3_config(config)
+            
+            s3_resource = boto3.resource("s3", **s3_config)
+            bucket = s3_resource.Bucket(str(bucket_name))
+            try:
+                bucket.load()
+            except Exception:
+                bucket.create()
+        except Exception as exc:
+            print(f"[mlflow] No se pudo asegurar el bucket '{bucket_name}': {exc}")
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> "MLflowTracker":
+        """Factory method para crear tracker desde configuración YAML."""
+        if not config:
+            raise ValueError("Configuración MLflow requerida")
+        if not config.get("enabled", True):
+            raise ValueError("MLflow debe estar habilitado")
+        
+        tracking_uri = config.get("tracking_uri")
+        if not tracking_uri:
+            raise ValueError("tracking_uri es requerido")
+        
+        configure_mlflow_environment(config)
+        
+        tracker = cls(
+            tracking_uri=tracking_uri,
+            experiment_name=config.get("experiment_name"),
+            default_tags=config.get("tags") or {},
+            run_name=config.get("run_name", "model_selection"),
+        )
+        
+        if artifact_bucket := config.get("artifact_bucket"):
+            tracker.ensure_artifact_bucket(artifact_bucket, config)
+        
+        return tracker
+
+
+def _get_s3_config(config: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Extrae configuración S3 de manera centralizada."""
+    if not config:
+        return {}
+    
+    s3_config = {}
+    if s3_endpoint := config.get("s3_endpoint_url"):
+        s3_config["endpoint_url"] = str(s3_endpoint)
+    if region_name := config.get("aws_default_region"):
+        s3_config["region_name"] = str(region_name)
+    if config.get("aws_s3_force_path_style"):
+        from botocore.config import Config
+        s3_config["config"] = Config(s3={"addressing_style": "path"})
+    
+    return s3_config
+
 
 def configure_mlflow_environment(config: Mapping[str, Any] | None) -> None:
     """Aplica variables de entorno para MLflow/S3 a partir de configuración declarativa."""
     if not config:
         return
 
-    s3_endpoint = config.get("s3_endpoint_url")
-    access_key = config.get("aws_access_key_id")
-    secret_key = config.get("aws_secret_access_key")
-    session_token = config.get("aws_session_token")
-    region_name = config.get("aws_default_region")
-    force_path_style = config.get("aws_s3_force_path_style")
-
-    if s3_endpoint:
-        os.environ["MLFLOW_S3_ENDPOINT_URL"] = str(s3_endpoint)
-    if access_key:
-        os.environ["AWS_ACCESS_KEY_ID"] = str(access_key)
-    if secret_key:
-        os.environ["AWS_SECRET_ACCESS_KEY"] = str(secret_key)
-    if session_token:
-        os.environ["AWS_SESSION_TOKEN"] = str(session_token)
-    if region_name:
-        os.environ.setdefault("AWS_DEFAULT_REGION", str(region_name))
-    if force_path_style:
-        os.environ["AWS_S3_FORCE_PATH_STYLE"] = "true"
+    # Mapeo de configuración a variables de entorno
+    env_mapping = {
+        "s3_endpoint_url": "MLFLOW_S3_ENDPOINT_URL",
+        "aws_access_key_id": "AWS_ACCESS_KEY_ID", 
+        "aws_secret_access_key": "AWS_SECRET_ACCESS_KEY",
+        "aws_session_token": "AWS_SESSION_TOKEN",
+        "aws_default_region": "AWS_DEFAULT_REGION",
+        "aws_s3_force_path_style": "AWS_S3_FORCE_PATH_STYLE",
+    }
+    
+    # Aplicar configuraciones
+    for config_key, env_var in env_mapping.items():
+        value = config.get(config_key)
+        if value is not None:
+            if config_key == "aws_s3_force_path_style":
+                os.environ[env_var] = "true"
+            elif config_key == "aws_default_region":
+                os.environ.setdefault(env_var, str(value))
+            else:
+                os.environ[env_var] = str(value)

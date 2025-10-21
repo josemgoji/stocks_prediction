@@ -85,11 +85,6 @@ def generate_prediction_from_configs(
     if dataset.empty:
         raise ValueError("No hay datos suficientes para generar la predicción.")
 
-    numeric_columns = dataset.select_dtypes(include=["number"]).columns
-    if len(numeric_columns) != len(dataset.columns):
-        dataset = dataset.copy()
-    dataset = dataset.astype({column: "float64" for column in numeric_columns})
-
     predictions = pipeline.predict(dataset)
     if isinstance(predictions, pd.Series):
         prediction_series = predictions

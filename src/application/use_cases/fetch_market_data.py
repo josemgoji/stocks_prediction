@@ -52,12 +52,9 @@ def fetch_market_data(
 
         macro_columns = list(macro_data.columns)
         if macro_columns:
-            # Asegura que las columnas macro tengan valores iniciales rellenados, evitando
-            # perder observaciones del activo base cuando la serie macro empieza más tarde.
             dataset.loc[:, macro_columns] = dataset[macro_columns].ffill()
             dataset.loc[:, macro_columns] = dataset[macro_columns].bfill()
 
-            # Si alguna serie macro sigue completamente vacía, la descartamos para no afectar.
             empty_macros = [
                 column for column in macro_columns if dataset[column].isna().all()
             ]
@@ -66,6 +63,10 @@ def fetch_market_data(
 
     if original_columns:
         dataset = dataset.dropna(subset=original_columns)
+
+    numeric_columns = dataset.select_dtypes(include=["number"]).columns
+    if len(numeric_columns) > 0:
+        dataset = dataset.astype({column: "float64" for column in numeric_columns})
 
     if save_path:
         _persist(dataset, save_path, save_format)
